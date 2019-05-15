@@ -35,15 +35,16 @@ var standardOfficeApps = []string{"Excel", "PowerPoint", "Word"}
 
 // OfficeRegistryRegExSingleDWORD is the data type for a RegEx Path / Single Value DWORD combination
 type OfficeRegistryRegExSingleDWORD struct {
-	RootKey        registry.Key
-	PathRegEx      string
-	ValueName      string
-	HardenedValue  uint32
-	OfficeApps     []string
-	OfficeVersions []string
-	shortName      string
-	longName       string
-	description    string
+	RootKey         registry.Key
+	PathRegEx       string
+	ValueName       string
+	HardenedValue   uint32
+	OfficeApps      []string
+	OfficeVersions  []string
+	shortName       string
+	longName        string
+	description     string
+	hardenByDefault bool
 }
 
 // OfficeOLE hardens Office Packager Objects
@@ -51,14 +52,15 @@ type OfficeRegistryRegExSingleDWORD struct {
 // 1 - Prompt from Office when user clicks, object executes
 // 2 - No prompt, Object does not execute
 var OfficeOLE = &OfficeRegistryRegExSingleDWORD{
-	RootKey:        registry.CURRENT_USER,
-	PathRegEx:      "SOFTWARE\\Microsoft\\Office\\%s\\%s\\Security",
-	ValueName:      "PackagerPrompt",
-	HardenedValue:  2,
-	OfficeApps:     standardOfficeApps,
-	OfficeVersions: standardOfficeVersions,
-	shortName:      "OfficeOLE",
-	longName:       "Office Packager Objects (OLE)",
+	RootKey:         registry.CURRENT_USER,
+	PathRegEx:       "SOFTWARE\\Microsoft\\Office\\%s\\%s\\Security",
+	ValueName:       "PackagerPrompt",
+	HardenedValue:   2,
+	OfficeApps:      standardOfficeApps,
+	OfficeVersions:  standardOfficeVersions,
+	shortName:       "OfficeOLE",
+	longName:        "Office Packager Objects (OLE)",
+	hardenByDefault: true,
 }
 
 // OfficeMacros contains Macro registry keys
@@ -67,28 +69,51 @@ var OfficeOLE = &OfficeRegistryRegExSingleDWORD{
 // 3 - Digitally signed only
 // 4 - Disable all
 var OfficeMacros = &OfficeRegistryRegExSingleDWORD{
-	RootKey:        registry.CURRENT_USER,
-	PathRegEx:      "SOFTWARE\\Microsoft\\Office\\%s\\%s\\Security",
-	ValueName:      "VBAWarnings",
-	HardenedValue:  4,
-	OfficeApps:     standardOfficeApps,
-	OfficeVersions: standardOfficeVersions,
-	shortName:      "OfficeMacros",
-	longName:       "Office Macros",
+	RootKey:         registry.CURRENT_USER,
+	PathRegEx:       "SOFTWARE\\Microsoft\\Office\\%s\\%s\\Security",
+	ValueName:       "VBAWarnings",
+	HardenedValue:   4,
+	OfficeApps:      standardOfficeApps,
+	OfficeVersions:  standardOfficeVersions,
+	shortName:       "OfficeMacros",
+	longName:        "Office Macros",
+	hardenByDefault: true,
 }
 
 // OfficeActiveX contains ActiveX registry keys
 var OfficeActiveX = &RegistrySingleValueDWORD{
-	RootKey:       registry.CURRENT_USER,
-	Path:          "SOFTWARE\\Microsoft\\Office\\Common\\Security",
-	ValueName:     "DisableAllActiveX",
-	HardenedValue: 1,
-	shortName:     "OfficeActiveX",
-	longName:      "Office ActiveX",
+	RootKey:         registry.CURRENT_USER,
+	Path:            "SOFTWARE\\Microsoft\\Office\\Common\\Security",
+	ValueName:       "DisableAllActiveX",
+	HardenedValue:   1,
+	shortName:       "OfficeActiveX",
+	longName:        "Office ActiveX",
+	hardenByDefault: true,
 }
 
 //// DDE Mitigations for Word, Outlook and Excel
 // Doesn't harden OneNote for now (due to high impact).
+//
+// Microsoft disabled DDE in Word with Office Update ADV170021 update. We make sure
+// that it is in default (disabled) state. This update adds a new Windows registry
+// key that controls the DDE feature's status for the Word app. The default value
+// disables DDE. Here are registry key's values:
+// [HKEY_CURRENT_USER\Software\Microsoft\Office\%s\Word\Security] AllowDDE(DWORD)
+// AllowDDE(DWORD) = 0: To disable DDE. This is the default setting after you install the update.
+// AllowDDE(DWORD) = 1: To allow DDE requests to an already running program, but prevent DDE requests that require another executable program to be launched.
+// AllowDDE(DWORD) = 2: To fully allow DDE requests.
+// On 1/9/2018, Microsoft released an update for Microsoft Office that adds defense-in-depth configuration options to selectively disable the DDE protocol in all supported editions of Microsoft Excel.
+// If you need to change DDE functionality in Excel after installing the update, follow these steps:
+// In the Registry Editor navigate to \HKEY_CURRENT_USER\Software\Microsoft\Office&lt;version>\Excel\Security DisableDDEServerLaunch(DWORD)
+// Set the DWORD value based on your requirements as follows:
+// DisableDDEServerLaunch = 0: Keep DDE server launch settings unchanged from their initial behavior. This is the default setting after you install the update.
+// DisableDDEServerLaunch = 1: Do not display the dialog that allows users to choose whether to launch a specific DDE server. Instead, behave automatically as though the user chose the default choice of NO.
+// In the Registry Editor navigate to \HKEY_CURRENT_USER\Software\Microsoft\Office&lt;version>\Excel\Security DisableDDEServerLookup(DWORD)
+// Set the DWORD value based on your requirements as follows:
+// DisableDDEServerLookup = 0: Keep DDE server lookup settings unchanged from their initial behavior. This is the default setting after you install the update.
+// DisableDDEServerLookup = 1: Disable querying for DDE Server availability - no query attempt will be made to find DDE servers. .
+
+//
 // [HKEY_CURRENT_USER\Software\Microsoft\Office\%s\Word\Options]
 // [HKEY_CURRENT_USER\Software\Microsoft\Office\%s\Word\Options\WordMail] (this one is for Outlook)
 // [HKEY_CURRENT_USER\Software\Microsoft\Office\%s\Excel\Options]
@@ -111,8 +136,118 @@ var pathRegExSecurity = "Software\\Microsoft\\Office\\%s\\%s\\Security"
 var pathWord2007 = "Software\\Microsoft\\Office\\12.0\\Word\\Options\\vpref"
 
 // OfficeDDE contains the registry keys for DDE hardening
+// please also refer to
+// https://docs.microsoft.com/en-us/security-updates/securityadvisories/2017/4053440
 var OfficeDDE = &MultiHardenInterfaces{
 	hardenInterfaces: []HardenInterface{
+		// AllowDDE: part of Update ADV170021
+		// disables DDE for Word (default setting after installation of update)
+		&OfficeRegistryRegExSingleDWORD{
+			RootKey:       registry.CURRENT_USER,
+			PathRegEx:     pathRegExSecurity,
+			ValueName:     "AllowDDE",
+			HardenedValue: 0,
+			OfficeApps:    []string{"Word"},
+			OfficeVersions: []string{
+				"14.0", // Office 2010
+				"15.0", // Office 2013
+				"16.0", // Office 2016
+			},
+			shortName: "OfficeDDE_AllowDDE_Word",
+		},
+		// DisableDDEServerLaunch: part of  Update ADV170021
+		// "0" reflects Microsoft standard settings. If you want to further harden
+		// your settings you could use "1" and uncomment this
+		//&OfficeRegistryRegExSingleDWORD{
+		//	RootKey:       registry.CURRENT_USER,
+		//	PathRegEx:     pathRegExSecurity,
+		//	ValueName:     "DisableDDEServerLaunch",
+		//	HardenedValue: 0,
+		//	OfficeApps:    []string{"Excel"},
+		//	OfficeVersions: []string{
+		//		"14.0", // Office 2010
+		//		"15.0", // Office 2013
+		//		"16.0", // Office 2016
+		//	},
+		//	shortName: "OfficeDDE_DDEServer_Excel1",
+		//},
+		// DisableDDEServerLookup: part of  Update ADV170021
+		// "0" reflects Microsoft standard settings. If you want to further harden
+		// your settings you could use "1" and uncomment this
+		//&OfficeRegistryRegExSingleDWORD{
+		//	RootKey:       registry.CURRENT_USER,
+		//	PathRegEx:     pathRegExSecurity,
+		//	ValueName:     "DisableDDEServerLookup",
+		//	HardenedValue: 0,
+		//	OfficeApps:    []string{"Excel"},
+		//	OfficeVersions: []string{
+		//		"14.0", // Office 2010
+		//		"15.0", // Office 2013
+		//		"16.0", // Office 2016
+		//	},
+		//	shortName: "OfficeDDE_DDEServer_Excel2",
+		//},
+		// the following setting has been removed, because it causes excel files
+		// that are opened in Windows Explorer not loading anymore (excel is
+		// started, but file is not opened (which is very inconvenient/unexpected)
+		// -> https://social.technet.microsoft.com/Forums/en-US/ec1d2f20-ec8a-4c3b-
+		//    9e1b-ee731981db7c/double-clicking-xlsx-files-opens-a-blank-excel-page
+		//&OfficeRegistryRegExSingleDWORD{
+		//	RootKey:        registry.CURRENT_USER,
+		//	PathRegEx:      pathRegExOptions,
+		//	ValueName:      "DDEAllowed",
+		//	HardenedValue:  0,
+		//	OfficeApps:     []string{"Excel"},
+		//	OfficeVersions: standardOfficeVersions,
+		//	shortName:      "OfficeDDE_DDEAllowedExcel",
+		//},
+		// the following setting has been removed, because it causes excel files
+		// that are opened in Windows Explorer not loading anymore (excel is
+		// started, but file is not opened (which is very inconvenient/unexpected)
+		// -> https://social.technet.microsoft.com/Forums/en-US/ec1d2f20-ec8a-4c3b-
+		//    9e1b-ee731981db7c/double-clicking-xlsx-files-opens-a-blank-excel-page
+		//&OfficeRegistryRegExSingleDWORD{
+		//	RootKey:        registry.CURRENT_USER,
+		//	PathRegEx:      pathRegExOptions,
+		//	ValueName:      "DDECleaned",
+		//	HardenedValue:  1,
+		//	OfficeApps:     []string{"Excel"},
+		//	OfficeVersions: standardOfficeVersions,
+		//	shortName:      "OfficeDDE_DDECleanedExcel",
+		//},
+		// the following setting has been removed, because it causes excel files
+		// that are opened in Windows Explorer not loading anymore (excel is
+		// started, but file is not opened (which is very inconvenient/unexpected)
+		//&OfficeRegistryRegExSingleDWORD{
+		//	RootKey:        registry.CURRENT_USER,
+		//	PathRegEx:      pathRegExOptions,
+		//	ValueName:      "Options",
+		//	HardenedValue:  0x117,
+		//	OfficeApps:     []string{"Excel"},
+		//	OfficeVersions: standardOfficeVersions,
+		//	shortName:      "OfficeDDE_OptionsExcel",
+		//},
+
+		// WorkbookLinkWarnings
+		// Impact of mitigation: Disabling this feature could prevent Excel
+		// spreadsheets from updating dynamically if disabled in the registry.
+		// Data might not be completely up-to-date because it is no longer being
+		// updated automatically via live feed. To update the worksheet, the user
+		// must start the feed manually. In addition, the user will not receive
+		// prompts to remind them to manually update the worksheet.
+		&OfficeRegistryRegExSingleDWORD{
+			RootKey:        registry.CURRENT_USER,
+			PathRegEx:      pathRegExSecurity,
+			ValueName:      "WorkbookLinkWarnings",
+			HardenedValue:  2,
+			OfficeApps:     []string{"Excel"},
+			OfficeVersions: standardOfficeVersions,
+			shortName:      "OfficeDDE_WorkbookLinksExcel",
+		},
+		// fNoCalclinksOnopen_90_1 & DontUpdateLinks:
+		// Impact of mitigation: Setting this registry key will disable automatic
+		// update for DDE field and OLE links. Users can still enable the update by
+		// right-clicking on the field and clicking “Update Field”.
 		&OfficeRegistryRegExSingleDWORD{
 			RootKey:       registry.CURRENT_USER,
 			PathRegEx:     pathRegExOptions,
@@ -139,42 +274,6 @@ var OfficeDDE = &MultiHardenInterfaces{
 			},
 			shortName: "OfficeDDE_DontUpdateLinksWordMail",
 		},
-		&OfficeRegistryRegExSingleDWORD{
-			RootKey:        registry.CURRENT_USER,
-			PathRegEx:      pathRegExOptions,
-			ValueName:      "DDEAllowed",
-			HardenedValue:  0,
-			OfficeApps:     []string{"Excel"},
-			OfficeVersions: standardOfficeVersions,
-			shortName:      "OfficeDDE_DDEAllowedExcel",
-		},
-		&OfficeRegistryRegExSingleDWORD{
-			RootKey:        registry.CURRENT_USER,
-			PathRegEx:      pathRegExOptions,
-			ValueName:      "DDECleaned",
-			HardenedValue:  1,
-			OfficeApps:     []string{"Excel"},
-			OfficeVersions: standardOfficeVersions,
-			shortName:      "OfficeDDE_DDECleanedExcel",
-		},
-		&OfficeRegistryRegExSingleDWORD{
-			RootKey:        registry.CURRENT_USER,
-			PathRegEx:      pathRegExOptions,
-			ValueName:      "Options",
-			HardenedValue:  0x117,
-			OfficeApps:     []string{"Excel"},
-			OfficeVersions: standardOfficeVersions,
-			shortName:      "OfficeDDE_OptionsExcel",
-		},
-		&OfficeRegistryRegExSingleDWORD{
-			RootKey:        registry.CURRENT_USER,
-			PathRegEx:      pathRegExSecurity,
-			ValueName:      "WorkbookLinkWarnings",
-			HardenedValue:  2,
-			OfficeApps:     []string{"Excel"},
-			OfficeVersions: standardOfficeVersions,
-			shortName:      "OfficeDDE_WorkbookLinksExcel",
-		},
 		&RegistrySingleValueDWORD{
 			RootKey:       registry.CURRENT_USER,
 			Path:          pathWord2007,
@@ -183,8 +282,9 @@ var OfficeDDE = &MultiHardenInterfaces{
 			shortName:     "OfficeDDE_Word2007",
 		},
 	},
-	shortName: "OfficeDDE",
-	longName:  "Office DDE  Links",
+	shortName:       "OfficeDDE",
+	longName:        "Office DDE Mitigations",
+	hardenByDefault: true,
 }
 
 //// HardenInterface methods
@@ -255,4 +355,9 @@ func (officeRegEx OfficeRegistryRegExSingleDWORD) LongName() string {
 // Description of the harden item
 func (officeRegEx OfficeRegistryRegExSingleDWORD) Description() string {
 	return officeRegEx.description
+}
+
+// HardenByDefault returns if subject should be hardened by default
+func (officeRegEx OfficeRegistryRegExSingleDWORD) HardenByDefault() bool {
+	return officeRegEx.hardenByDefault
 }

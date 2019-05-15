@@ -193,7 +193,7 @@ func markStatus(hardened bool) {
 		err := registry.DeleteKey(registry.CURRENT_USER, hardentoolsKeyPath)
 		if err != nil {
 			Info.Println(err.Error())
-			events.AppendText("Could not remove hardentools registry keys - nothing to worry about.")
+			events.AppendText("Could not remove hardentools registry keys - nothing to worry about.\r\n")
 		}
 	}
 }
@@ -206,6 +206,7 @@ func hardenAll() {
 	go func() {
 		triggerAll(true)
 		markStatus(true)
+		showStatus()
 
 		showInfoDialog("Done!\nI have hardened all risky features!\nFor all changes to take effect please restart Windows.")
 		os.Exit(0)
@@ -219,7 +220,9 @@ func restoreAll() {
 	// use goroutine to allow lxn/walk to update window
 	go func() {
 		triggerAll(false)
+		restoreSavedRegistryKeys()
 		markStatus(false)
+		showStatus()
 
 		showInfoDialog("Done!\nI have restored all risky features!\nFor all changes to take effect please restart Windows.")
 		os.Exit(0)
@@ -247,16 +250,15 @@ func triggerAll(harden bool) {
 
 			err := hardenSubject.Harden(harden)
 			if err != nil {
-				events.AppendText(fmt.Sprintf("\n!! %s %s FAILED !!\n", outputString, hardenSubject.Name()))
+				events.AppendText(fmt.Sprintf("\r\n!! %s %s FAILED !!\r\n", outputString, hardenSubject.Name()))
 				Info.Printf("Error for operation %s: %s", hardenSubject.Name(), err.Error())
 			} else {
-				Info.Printf("%s %s has been successful", outputString, hardenSubject.Name())
+				Trace.Printf("%s %s has been successful", outputString, hardenSubject.Name())
 			}
 		}
 	}
 
-	events.AppendText("\n")
-	showStatus()
+	events.AppendText("\r\n")
 }
 
 // hardenDefaultsAgain restores the original settings and
@@ -268,15 +270,14 @@ func hardenDefaultsAgain() {
 	go func() {
 		// restore hardened settings
 		triggerAll(false)
+		restoreSavedRegistryKeys()
 		markStatus(false)
 
 		// reset expertConfig (is set to currently already hardened settings
 		// in case of restore
 		expertConfig = make(map[string]bool)
 		for _, hardenSubject := range allHardenSubjects {
-			// TODO: sets all harden subjects to active for now. Better: replace
-			// this with default settings (to be implemented)
-			expertConfig[hardenSubject.Name()] = true
+			expertConfig[hardenSubject.Name()] = hardenSubject.HardenByDefault()
 		}
 
 		// harden all settings
@@ -293,11 +294,11 @@ func hardenDefaultsAgain() {
 func showStatus() {
 	for _, hardenSubject := range allHardenSubjects {
 		if hardenSubject.IsHardened() {
-			eventText := fmt.Sprintf("%s is now hardened\n", hardenSubject.Name())
+			eventText := fmt.Sprintf("%s is now hardened\r\n", hardenSubject.Name())
 			events.AppendText(eventText)
 			Info.Print(eventText)
 		} else {
-			eventText := fmt.Sprintf("%s is now NOT hardened\n", hardenSubject.Name())
+			eventText := fmt.Sprintf("%s is now NOT hardened\r\n", hardenSubject.Name())
 			events.AppendText(eventText)
 			Info.Print(eventText)
 		}
